@@ -11,7 +11,7 @@ clear
 
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${CYAN}* *${NC}"
-echo -e "${CYAN}* MAHDI - VPN MANAGER SETUP         *${NC}"
+echo -e "${CYAN}* AMIR SALEMI - VPN MANAGER SETUP         *${NC}"
 echo -e "${CYAN}* *${NC}"
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${YELLOW}   >>> Starting Installation <<<   ${NC}"
@@ -317,9 +317,9 @@ elif [ "$1" == "uninstall" ] && [ "$2" == "--yes" ]; then
     do_uninstall_all; exit 0
 fi
 
-# ---------- منوی تعاملی ترمینال ----------
+# ---------- Interactive terminal menu (English, to avoid UTF-8 issues on minimal terminals) ----------
 
-pause() { read -p "برای ادامه Enter بزنید..." _; }
+pause() { read -p "Press Enter to continue..." _; }
 
 print_locations() {
     local data
@@ -328,7 +328,7 @@ print_locations() {
 import json, sys
 locs = json.load(sys.stdin)
 if not locs:
-    print('  هیچ لوکیشنی ثبت نشده است.')
+    print('  No locations registered yet.')
 for l in locs:
     print(f\"  [{l['id']}] {l['name']}  |  Region: {l['region']}  |  Port: {l['port']}\")
 "
@@ -336,21 +336,21 @@ for l in locs:
 
 menu_add() {
     clear
-    echo -e "${CYAN}=== افزودن لوکیشن جدید ===${NC}"
-    read -p "نام دلخواه برای لوکیشن: " name
-    read -p "کد ریجن (مثلا US, DE, GB): " region
+    echo -e "${CYAN}=== Add New Location ===${NC}"
+    read -p "Location name: " name
+    read -p "Region code (e.g. US, DE, GB): " region
     region=${region:-US}; region=${region^^}
-    read -p "پورت SOCKS اختصاصی (مثلا 2081): " port
+    read -p "Dedicated SOCKS port (e.g. 2081): " port
     do_add "$name" "$region" "$port"
     pause
 }
 
 menu_remove() {
     clear
-    echo -e "${CYAN}=== حذف لوکیشن ===${NC}"
+    echo -e "${CYAN}=== Remove Location ===${NC}"
     print_locations
     echo ""
-    read -p "شناسه لوکیشن برای حذف (مثلا loc1): " id
+    read -p "Location ID to remove (e.g. loc1): " id
     [ -z "$id" ] && return
     do_remove "$id"
     pause
@@ -358,12 +358,12 @@ menu_remove() {
 
 menu_change_region() {
     clear
-    echo -e "${CYAN}=== تغییر ریجن یک لوکیشن ===${NC}"
+    echo -e "${CYAN}=== Change Region of a Location ===${NC}"
     print_locations
     echo ""
-    read -p "شناسه لوکیشن: " id
+    read -p "Location ID: " id
     [ -z "$id" ] && return
-    read -p "ریجن جدید: " region
+    read -p "New region code: " region
     region=${region^^}
     do_update_region "$id" "$region"
     pause
@@ -371,13 +371,13 @@ menu_change_region() {
 
 menu_control() {
     clear
-    echo -e "${CYAN}=== استارت/استاپ/ریستارت لوکیشن ===${NC}"
+    echo -e "${CYAN}=== Start / Stop / Restart a Location ===${NC}"
     print_locations
     echo ""
-    read -p "شناسه لوکیشن: " id
+    read -p "Location ID: " id
     [ -z "$id" ] && return
-    echo "1) استارت  2) استاپ  3) ریستارت"
-    read -p "انتخاب: " op
+    echo "1) Start  2) Stop  3) Restart"
+    read -p "Choice: " op
     case "$op" in
         1) systemctl start "psiphon@$id" ;;
         2) systemctl stop "psiphon@$id" ;;
@@ -388,15 +388,15 @@ menu_control() {
 
 menu_uninstall() {
     clear
-    echo -e "${RED}=== حذف کامل سرویس و اسکریپت ===${NC}"
-    echo -e "${YELLOW}این عملیات همه لوکیشن‌ها، ربات تلگرام، و اسکریپت‌های نصب‌شده را برای همیشه حذف می‌کند.${NC}"
-    read -p "برای تایید عبارت YES را وارد کنید: " confirm
+    echo -e "${RED}=== Completely Remove Service & Script ===${NC}"
+    echo -e "${YELLOW}This will permanently delete all locations, the Telegram bot, and the installed scripts.${NC}"
+    read -p "Type YES to confirm: " confirm
     if [ "$confirm" == "YES" ]; then
         systemctl stop psiphon-bot >/dev/null 2>&1
         do_uninstall_all
         exit 0
     else
-        echo "لغو شد."
+        echo "Cancelled."
         pause
     fi
 }
@@ -404,20 +404,20 @@ menu_uninstall() {
 while true; do
     clear
     echo -e "${CYAN}***************************************************${NC}"
-    echo -e "${CYAN}*        MAHDI - VPN MANAGER (vpn-menu)      *${NC}"
+    echo -e "${CYAN}*        AMIR SALEMI - VPN MANAGER (vpn-menu)      *${NC}"
     echo -e "${CYAN}***************************************************${NC}"
     echo ""
-    echo -e "${GREEN}لوکیشن‌های فعلی:${NC}"
+    echo -e "${GREEN}Current locations:${NC}"
     print_locations
     echo ""
-    echo "1) افزودن لوکیشن جدید"
-    echo "2) حذف یک لوکیشن"
-    echo "3) تغییر ریجن یک لوکیشن"
-    echo "4) استارت / استاپ / ریستارت یک لوکیشن"
-    echo "5) حذف کامل سرویس و اسکریپت از سرور"
-    echo "0) خروج"
+    echo "1) Add new location"
+    echo "2) Remove a location"
+    echo "3) Change region of a location"
+    echo "4) Start / Stop / Restart a location"
+    echo "5) Completely remove service & script from server"
+    echo "0) Exit"
     echo ""
-    read -p "انتخاب شما: " choice
+    read -p "Your choice: " choice
     case "$choice" in
         1) menu_add ;;
         2) menu_remove ;;
@@ -442,7 +442,7 @@ import os
 import requests
 from telebot import types
 
-# --- Config for Mahdi ---
+# --- Config for Amir Salemi ---
 BOT_TOKEN = "${BOT_TOKEN}"
 ADMIN_ID = ${ADMIN_ID}
 # ------------------------------
@@ -511,7 +511,7 @@ def locations_keyboard(prefix):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if is_admin(message.from_user.id):
-        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی *مهدی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
+        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **امیر سالمی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
     else:
         bot.reply_to(message, "⛔️ دسترسی غیرمجاز است.")
 
@@ -693,7 +693,7 @@ EOF
 # ساخت سرویس ربات
 cat > /etc/systemd/system/psiphon-bot.service << 'EOF'
 [Unit]
-Description=Telegram Bot for Mahdi Manager
+Description=Telegram Bot for Amir Salemi Manager
 After=network.target
 
 [Service]
@@ -720,7 +720,7 @@ systemctl restart psiphon-bot
 echo ""
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "${GREEN}* INSTALLATION COMPLETE! 🎉              *${NC}"
-echo -e "${GREEN}* Designed for: MAHDI                 *${NC}"
+echo -e "${GREEN}* Designed for: AMIR SALEMI                 *${NC}"
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "1. Default Location: US on port 2080"
 echo -e "2. Bot Status: STARTED"
