@@ -11,7 +11,7 @@ clear
 
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${CYAN}* *${NC}"
-echo -e "${CYAN}* AMIR SALEMI - VPN MANAGER SETUP         *${NC}"
+echo -e "${CYAN}* MAHDI - VPN MANAGER SETUP         *${NC}"
 echo -e "${CYAN}* *${NC}"
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${YELLOW}   >>> Starting Installation <<<   ${NC}"
@@ -452,7 +452,7 @@ menu_uninstall() {
 while true; do
     clear
     echo -e "${CYAN}***************************************************${NC}"
-    echo -e "${CYAN}*        AMIR SALEMI - VPN MANAGER (vpn-menu)      *${NC}"
+    echo -e "${CYAN}*        MAHDI - VPN MANAGER (vpn-menu)      *${NC}"
     echo -e "${CYAN}***************************************************${NC}"
     echo ""
     echo -e "${GREEN}Current locations:${NC}"
@@ -490,7 +490,7 @@ import os
 import requests
 from telebot import types
 
-# --- Config for Amir Salemi ---
+# --- Config for Mahdi ---
 BOT_TOKEN = "${BOT_TOKEN}"
 ADMIN_ID = ${ADMIN_ID}
 # ------------------------------
@@ -559,7 +559,7 @@ def locations_keyboard(prefix):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if is_admin(message.from_user.id):
-        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **امیر سالمی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
+        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **مهدی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
     else:
         bot.reply_to(message, "⛔️ دسترسی غیرمجاز است.")
 
@@ -741,7 +741,7 @@ EOF
 # ساخت سرویس ربات
 cat > /etc/systemd/system/psiphon-bot.service << 'EOF'
 [Unit]
-Description=Telegram Bot for Amir Salemi Manager
+Description=Telegram Bot for Mahdi Manager
 After=network.target
 
 [Service]
@@ -769,7 +769,7 @@ systemctl restart psiphon-bot
 echo ""
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "${GREEN}* INSTALLATION COMPLETE! 🎉              *${NC}"
-echo -e "${GREEN}* Designed for: AMIR SALEMI                 *${NC}"
+echo -e "${GREEN}* Designed for: MAHDI                 *${NC}"
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "1. Default Location: US on port 2080"
 echo -e "2. Bot Status: STARTED"
