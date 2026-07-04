@@ -404,7 +404,7 @@ menu_uninstall() {
 while true; do
     clear
     echo -e "${CYAN}***************************************************${NC}"
-    echo -e "${CYAN}*        AMIR SALEMI - VPN MANAGER (vpn-menu)      *${NC}"
+    echo -e "${CYAN}*        MAHDI - VPN MANAGER (vpn-menu)      *${NC}"
     echo -e "${CYAN}***************************************************${NC}"
     echo ""
     echo -e "${GREEN}لوکیشن‌های فعلی:${NC}"
@@ -442,7 +442,7 @@ import os
 import requests
 from telebot import types
 
-# --- Config for Amir Salemi ---
+# --- Config for Mahdi ---
 BOT_TOKEN = "${BOT_TOKEN}"
 ADMIN_ID = ${ADMIN_ID}
 # ------------------------------
@@ -511,7 +511,7 @@ def locations_keyboard(prefix):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if is_admin(message.from_user.id):
-        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **امیر سالمی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
+        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی *مهدی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
     else:
         bot.reply_to(message, "⛔️ دسترسی غیرمجاز است.")
 
@@ -693,7 +693,7 @@ EOF
 # ساخت سرویس ربات
 cat > /etc/systemd/system/psiphon-bot.service << 'EOF'
 [Unit]
-Description=Telegram Bot for Amir Salemi Manager
+Description=Telegram Bot for Mahdi Manager
 After=network.target
 
 [Service]
