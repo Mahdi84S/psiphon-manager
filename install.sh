@@ -4,24 +4,26 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+NC='\033[0m' # No Color
+
 
 clear
 
 echo -e "${CYAN}***************************************************${NC}"
-echo -e "${CYAN}*                                                 *${NC}"
-echo -e "${CYAN}*  MAHDI - VPN MANAGER SETUP                      *${NC}"
-echo -e "${CYAN}*  Created by Mahdi                               *${NC}"
-echo -e "${CYAN}*                                                 *${NC}"
+echo -e "${CYAN}* *${NC}"
+echo -e "${CYAN}* MAHDI - VPN MANAGER SETUP         *${NC}"
+echo -e "${CYAN}* *${NC}"
 echo -e "${CYAN}***************************************************${NC}"
-echo -e "${YELLOW}    >>> Starting Installation <<<    ${NC}"
+echo -e "${YELLOW}   >>> Starting Installation <<<   ${NC}"
 echo ""
 
+# 1. چک کردن دسترسی روت
 if [ "$EUID" -ne 0 ]; then 
-    echo -e "${RED}❌ Please run with root privileges (sudo su)${NC}"
-    exit 1
+    echo -e "${RED}❌ لطفاً با دسترسی روت اجرا کنید (sudo su)${NC}"
+    exit
 fi
 
+# 2. دریافت توکن و آیدی
 echo -e "${GREEN}[?] Please enter your Telegram Bot Token:${NC}"
 read -p "Token: " BOT_TOKEN
 
@@ -33,53 +35,405 @@ if [[ -z "$BOT_TOKEN" || -z "$ADMIN_ID" ]]; then
     exit 1
 fi
 
-# 1. Dependencies
-echo -e "${CYAN}[1/5] Installing Dependencies...${NC}"
+# 3. نصب پیش‌نیازها
+echo -e "${CYAN}[1/8] Updating System & Installing Dependencies...${NC}"
 apt update -q -y
-apt install -q -y wget curl nano python3 python3-pip unzip jq
+apt install -q -y wget curl nano python3 python3-pip unzip
 
+# نصب کتابخانه‌های پایتون (رفع ارور سیستم‌های جدید)
+echo -e "${CYAN}[2/8] Installing Python Libraries...${NC}"
 rm /usr/lib/python3.*/EXTERNALLY-MANAGED 2>/dev/null
 pip3 install pyTelegramBotAPI requests pysocks --break-system-packages 2>/dev/null || pip3 install pyTelegramBotAPI requests pysocks
 
-# 2. Directories & Core Engine
-echo -e "${CYAN}[2/5] Setting up Core Engine...${NC}"
-mkdir -p /etc/vpncore-multi
-mkdir -p /usr/local/bin
+# 4. دانلود و نصب هسته سایفون
+echo -e "${CYAN}[3/8] Installing Psiphon Core...${NC}"
+wget -qO /usr/local/bin/psiphon https://github.com/Psiphon-Labs/psiphon-tunnel-core-binaries/raw/master/linux/psiphon-tunnel-core-x86_64
+chmod +x /usr/local/bin/psiphon
 
-wget -qO /usr/local/bin/vpncore https://github.com/Psiphon-Labs/psiphon-tunnel-core-binaries/raw/master/linux/psiphon-tunnel-core-x86_64
-chmod +x /usr/local/bin/vpncore
+# 5. ساخت ساختار پوشه‌ها برای مدیریت چند لوکیشن
+echo -e "${CYAN}[4/8] Preparing multi-location structure...${NC}"
+BASE_DIR="/etc/vpn-manager"
+CONF_DIR="$BASE_DIR/configs"
+DATA_DIR="$BASE_DIR/data"
+mkdir -p "$CONF_DIR" "$DATA_DIR"
 
-if [ ! -f /etc/vpncore-multi/instances.json ]; then
-cat <<EOF > /etc/vpncore-multi/instances.json
-{
-    "2080": "US"
-}
+SIG_KEY="MIICIDANBgkqhkiG9w0BAQEFAAOCAg0AMIICCAKCAgEAt7Ls+/39r+T6zNW7GiVpJfzq/xvL9SBH5rIFnk0RXYEYavax3WS6HOD35eTAqn8AniOwiH+DOkvgSKF2caqk/y1dfq47Pdymtwzp9ikpB1C5OfAysXzBiwVJlCdajBKvBZDerV1cMvRzCKvKwRmvDmHgphQQ7WfXIGbRbmmk6opMBh3roE42KcotLFtqp0RRwLtcBRNtCdsrVsjiI1Lqz/lH+T61sGjSjQ3CHMuZYSQJZo/KrvzgQXpkaCTdbObxHqb6/+i1qaVOfEsvjoiyzTxJADvSytVtcTjijhPEV6XskJVHE1Zgl+7rATr/pDQkw6DPCNBS1+Y6fy7GstZALQXwEDN/qhQI9kWkHijT8ns+i1vGg00Mk/6J75arLhqcodWsdeG/M/moWgqQAnlZAGVtJI1OgeF5fsPpXu4kctOfuZlGjVZXQNW34aOzm8r8S0eVZitPlbhcPiR4gT/aSMz/wd8lZlzZYsje/Jr8u/YtlwjjreZrGRmG8KMOzukV3lLmMppXFMvl4bxv6YFEmIuTsOhbLTwFgh7KYNjodLj/LsqRVfwz31PgWQFTEPICV7GCvgVlPRxnofqKSjgTWI4mxDhBpVcATvaoBl1L/6WLbFvBsoAUBItWwctO2xalKxF5szhGm8lccoc5MZr8kfE0uxMgsxz4er68iCID+rsCAQM="
+
+cat > "$BASE_DIR/sig.key" <<EOF
+$SIG_KEY
 EOF
-fi
 
-# 3. Dynamic Configuration Engine
-cat <<'EOF' > /etc/vpncore-multi/template.sh
+# 6. ساخت helper.py برای مدیریت دیتابیس لوکیشن‌ها (JSON)
+echo -e "${CYAN}[5/8] Creating location database helper...${NC}"
+cat > "$BASE_DIR/helper.py" << 'PYEOF'
+import json
+import sys
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "locations.json")
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {"locations": [], "next_id": 1}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+def save_db(db):
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f, indent=4)
+
+def cmd_add(name, region, port):
+    db = load_db()
+    port = int(port)
+    for loc in db["locations"]:
+        if loc["port"] == port:
+            print(f"ERROR: Port {port} already in use by location '{loc['name']}'", file=sys.stderr)
+            sys.exit(1)
+    loc_id = f"loc{db['next_id']}"
+    db["next_id"] += 1
+    entry = {"id": loc_id, "name": name, "region": region, "port": port}
+    db["locations"].append(entry)
+    save_db(db)
+    print(json.dumps(entry))
+
+def cmd_remove(loc_id):
+    db = load_db()
+    before = len(db["locations"])
+    db["locations"] = [l for l in db["locations"] if l["id"] != loc_id]
+    if len(db["locations"]) == before:
+        print(f"ERROR: Location '{loc_id}' not found", file=sys.stderr)
+        sys.exit(1)
+    save_db(db)
+    print("OK")
+
+def cmd_list():
+    db = load_db()
+    print(json.dumps(db["locations"]))
+
+def cmd_get(loc_id):
+    db = load_db()
+    for loc in db["locations"]:
+        if loc["id"] == loc_id:
+            print(json.dumps(loc))
+            return
+    print(f"ERROR: Location '{loc_id}' not found", file=sys.stderr)
+    sys.exit(1)
+
+def cmd_update_region(loc_id, region):
+    db = load_db()
+    for loc in db["locations"]:
+        if loc["id"] == loc_id:
+            loc["region"] = region
+            save_db(db)
+            print("OK")
+            return
+    print(f"ERROR: Location '{loc_id}' not found", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: helper.py <add|remove|list|get|update_region> [args]", file=sys.stderr)
+        sys.exit(1)
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
+    try:
+        if cmd == "add":
+            cmd_add(*args)
+        elif cmd == "remove":
+            cmd_remove(*args)
+        elif cmd == "list":
+            cmd_list()
+        elif cmd == "get":
+            cmd_get(*args)
+        elif cmd == "update_region":
+            cmd_update_region(*args)
+        else:
+            print(f"ERROR: Unknown command '{cmd}'", file=sys.stderr)
+            sys.exit(1)
+    except TypeError:
+        print("ERROR: Invalid arguments", file=sys.stderr)
+        sys.exit(1)
+PYEOF
+
+# 7. ساخت systemd template برای هر لوکیشن
+echo -e "${CYAN}[6/8] Creating systemd template unit...${NC}"
+cat > /etc/systemd/system/psiphon@.service << 'UNITEOF'
+[Unit]
+Description=Psiphon Tunnel Instance %i
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/vpn-manager/data/%i
+ExecStart=/usr/local/bin/psiphon -config /etc/vpn-manager/configs/%i.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+# 8. ساخت دستور تعاملی vpn-menu (هم منوی ترمینال هم بک‌اند دستورات ربات)
+echo -e "${CYAN}[7/8] Installing 'vpn-menu' command...${NC}"
+cat > /usr/local/bin/vpn-menu << 'MENUEOF'
 #!/bin/bash
-PORT=$1
-REGION=$2
-cat <<EON > /etc/vpncore-multi/config-$PORT.json
+
+GREEN='\033[0;32m'; CYAN='\033[0;36m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+
+BASE_DIR="/etc/vpn-manager"
+CONF_DIR="$BASE_DIR/configs"
+DATA_DIR="$BASE_DIR/data"
+HELPER="$BASE_DIR/helper.py"
+SIG_KEY_FILE="$BASE_DIR/sig.key"
+
+if [ -f "$SIG_KEY_FILE" ]; then SIG_KEY=$(cat "$SIG_KEY_FILE"); fi
+
+# ---------- توابع اصلی (منبع مشترک برای منو و ربات تلگرام) ----------
+
+make_config() {
+    local id="$1" region="$2" port="$3"
+    mkdir -p "$DATA_DIR/$id"
+    cat > "$CONF_DIR/$id.json" << EOF
 {
-    "LocalSocksProxyPort": $PORT,
-    "EgressRegion": "$REGION",
+    "LocalSocksProxyPort": $port,
+    "EgressRegion": "$region",
     "PropagationChannelId": "FFFFFFFFFFFFFFFF",
     "SponsorId": "FFFFFFFFFFFFFFFF",
     "RemoteServerListUrl": "https://s3.amazonaws.com//psiphon/web/mjr4-p23r-puwl/server_list_compressed",
-    "RemoteServerListSignaturePublicKey": "MIICIDANBgkqhkiG9w0BAQEFAAOCAg0AMIICCAKCAgEAt7Ls+/39r+T6zNW7GiVpJfzq/xvL9SBH5rIFnk0RXYEYavax3WS6HOD35eTAqn8AniOwiH+DOkvgSKF2caqk/y1dfq47Pdymtwzp9ikpB1C5OfAysXzBiwVJlCdajBKvBZDerV1cMvRzCKvKwRmvDmHgphQQ7WfXIGbRbmmk6opMBh3roE42KcotLFtqp0RRwLtcBRNtCdsrVsjiI1Lqz/lH+T61sGjSjQ3CHMuZYSQJZo/KrvzgQXpkaCTdbObxHqb6/+i1qaVOfEsvjoiyzTxJADvSytVtcTjijhPEV6XskJVHE1Zgl+7rATr/pDQkw6DPCNBS1+Y6fy7GstZALQXwEDN/qhQI9kWkHijT8ns+i1vGg00Mk/6J75arLhqcodWsdeG/M/moWgqQAnlZAGVtJI1OgeF5fsPpXu4kctOfuZlGjVZXQNW34aOzm8r8S0eVZitPlbhcPiR4gT/aSMz/wd8lZlzZYsje/Jr8u/YtlwjjreZrGRmG8KMOzukV3lLmMppXFMvl4bxv6YFEmIuTsOhbLTwFgh7KYNjodLj/LsqRVfwz31PgWQFTEPICV7GCvgVlPRxnofqKSjgTWI4mxDhBpVcATvaoBl1L/6WLbFvBsoAUBItWwctO2xalKxF5szhGm8lccoc5MZr8kfE0uxMgsxz4er68iCID+rsCAQM=",
-    "RemoteServerListDownloadFilename": "remote_server_list",
-    "FetchRemoteServerListRetryIntervalMilliseconds": 1000
+    "RemoteServerListSignaturePublicKey": "$SIG_KEY",
+    "RemoteServerListDownloadFilename": "$DATA_DIR/$id/remote_server_list",
+    "FetchRemoteServerListRetryIntervalMilliseconds": 1000,
+    "DataStoreDirectory": "$DATA_DIR/$id"
 }
-EON
 EOF
-chmod +x /etc/vpncore-multi/template.sh
+}
 
-# 4. Create Telegram Bot Manager
-echo -e "${CYAN}[3/5] Creating Telegram Bot Manager...${NC}"
-cat <<EOF > /etc/vpncore-multi/manager_bot.py
+port_in_use_by_system() {
+    local port="$1"
+    (command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":$port$") 
+}
+
+do_add() {
+    local name="$1" region="$2" port="$3"
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo "ERROR: Invalid port '$port'"
+        return 1
+    fi
+    if port_in_use_by_system "$port"; then
+        echo "ERROR: Port $port is already in use on this system"
+        return 1
+    fi
+    local result
+    result=$(python3 "$HELPER" add "$name" "$region" "$port" 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "$result"
+        return 1
+    fi
+    local id
+    id=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+    make_config "$id" "$region" "$port"
+    systemctl enable --now "psiphon@$id" >/dev/null 2>&1
+    echo "OK: Location '$name' added as $id (region=$region, port=$port)"
+    echo "$id"
+    return 0
+}
+
+do_remove() {
+    local id="$1"
+    systemctl disable --now "psiphon@$id" >/dev/null 2>&1
+    rm -f "$CONF_DIR/$id.json"
+    rm -rf "$DATA_DIR/$id"
+    python3 "$HELPER" remove "$id"
+}
+
+do_update_region() {
+    local id="$1" region="$2"
+    local info port
+    info=$(python3 "$HELPER" get "$id" 2>&1) || { echo "$info"; return 1; }
+    port=$(echo "$info" | python3 -c "import json,sys; print(json.load(sys.stdin)['port'])")
+    python3 "$HELPER" update_region "$id" "$region" >/dev/null
+    make_config "$id" "$region" "$port"
+    systemctl restart "psiphon@$id" >/dev/null 2>&1
+    echo "OK"
+}
+
+do_list_json() {
+    python3 "$HELPER" list
+}
+
+do_status_one() {
+    local id="$1"
+    local status
+    status=$(systemctl is-active "psiphon@$id" 2>/dev/null)
+    echo "$status"
+}
+
+do_ip_check() {
+    local port="$1"
+    curl -s --socks5 "127.0.0.1:$port" https://api.ipify.org --max-time 5
+}
+
+do_uninstall_all() {
+    echo "Stopping and removing all locations..."
+    local ids
+    ids=$(python3 "$HELPER" list 2>/dev/null | python3 -c "import json,sys; [print(l['id']) for l in json.load(sys.stdin)]" 2>/dev/null)
+    for id in $ids; do
+        systemctl disable --now "psiphon@$id" >/dev/null 2>&1
+    done
+    systemctl disable --now psiphon-bot >/dev/null 2>&1
+    rm -f /etc/systemd/system/psiphon@.service
+    rm -f /etc/systemd/system/psiphon-bot.service
+    systemctl daemon-reload
+    rm -rf "$BASE_DIR"
+    rm -f /usr/local/bin/psiphon
+    rm -f /root/manager_bot.py
+    echo "Uninstall complete."
+    rm -f -- "$0" 2>/dev/null
+}
+
+# ---------- حالت غیرتعاملی (برای فراخوانی از ربات تلگرام) ----------
+
+if [ "$1" == "add" ]; then
+    shift; do_add "$1" "$2" "$3"; exit $?
+elif [ "$1" == "remove" ]; then
+    shift; do_remove "$1"; exit $?
+elif [ "$1" == "update-region" ]; then
+    shift; do_update_region "$1" "$2"; exit $?
+elif [ "$1" == "list" ]; then
+    do_list_json; exit 0
+elif [ "$1" == "status" ]; then
+    shift; do_status_one "$1"; exit 0
+elif [ "$1" == "ip" ]; then
+    shift; do_ip_check "$1"; exit 0
+elif [ "$1" == "start" ]; then
+    shift; systemctl start "psiphon@$1" >/dev/null 2>&1; exit $?
+elif [ "$1" == "stop" ]; then
+    shift; systemctl stop "psiphon@$1" >/dev/null 2>&1; exit $?
+elif [ "$1" == "restart" ]; then
+    shift; systemctl restart "psiphon@$1" >/dev/null 2>&1; exit $?
+elif [ "$1" == "uninstall" ] && [ "$2" == "--yes" ]; then
+    do_uninstall_all; exit 0
+fi
+
+# ---------- منوی تعاملی ترمینال ----------
+
+pause() { read -p "برای ادامه Enter بزنید..." _; }
+
+print_locations() {
+    local data
+    data=$(do_list_json)
+    echo "$data" | python3 -c "
+import json, sys
+locs = json.load(sys.stdin)
+if not locs:
+    print('  هیچ لوکیشنی ثبت نشده است.')
+for l in locs:
+    print(f\"  [{l['id']}] {l['name']}  |  Region: {l['region']}  |  Port: {l['port']}\")
+"
+}
+
+menu_add() {
+    clear
+    echo -e "${CYAN}=== افزودن لوکیشن جدید ===${NC}"
+    read -p "نام دلخواه برای لوکیشن: " name
+    read -p "کد ریجن (مثلا US, DE, GB): " region
+    region=${region:-US}; region=${region^^}
+    read -p "پورت SOCKS اختصاصی (مثلا 2081): " port
+    do_add "$name" "$region" "$port"
+    pause
+}
+
+menu_remove() {
+    clear
+    echo -e "${CYAN}=== حذف لوکیشن ===${NC}"
+    print_locations
+    echo ""
+    read -p "شناسه لوکیشن برای حذف (مثلا loc1): " id
+    [ -z "$id" ] && return
+    do_remove "$id"
+    pause
+}
+
+menu_change_region() {
+    clear
+    echo -e "${CYAN}=== تغییر ریجن یک لوکیشن ===${NC}"
+    print_locations
+    echo ""
+    read -p "شناسه لوکیشن: " id
+    [ -z "$id" ] && return
+    read -p "ریجن جدید: " region
+    region=${region^^}
+    do_update_region "$id" "$region"
+    pause
+}
+
+menu_control() {
+    clear
+    echo -e "${CYAN}=== استارت/استاپ/ریستارت لوکیشن ===${NC}"
+    print_locations
+    echo ""
+    read -p "شناسه لوکیشن: " id
+    [ -z "$id" ] && return
+    echo "1) استارت  2) استاپ  3) ریستارت"
+    read -p "انتخاب: " op
+    case "$op" in
+        1) systemctl start "psiphon@$id" ;;
+        2) systemctl stop "psiphon@$id" ;;
+        3) systemctl restart "psiphon@$id" ;;
+    esac
+    pause
+}
+
+menu_uninstall() {
+    clear
+    echo -e "${RED}=== حذف کامل سرویس و اسکریپت ===${NC}"
+    echo -e "${YELLOW}این عملیات همه لوکیشن‌ها، ربات تلگرام، و اسکریپت‌های نصب‌شده را برای همیشه حذف می‌کند.${NC}"
+    read -p "برای تایید عبارت YES را وارد کنید: " confirm
+    if [ "$confirm" == "YES" ]; then
+        systemctl stop psiphon-bot >/dev/null 2>&1
+        do_uninstall_all
+        exit 0
+    else
+        echo "لغو شد."
+        pause
+    fi
+}
+
+while true; do
+    clear
+    echo -e "${CYAN}***************************************************${NC}"
+    echo -e "${CYAN}*        AMIR SALEMI - VPN MANAGER (vpn-menu)      *${NC}"
+    echo -e "${CYAN}***************************************************${NC}"
+    echo ""
+    echo -e "${GREEN}لوکیشن‌های فعلی:${NC}"
+    print_locations
+    echo ""
+    echo "1) افزودن لوکیشن جدید"
+    echo "2) حذف یک لوکیشن"
+    echo "3) تغییر ریجن یک لوکیشن"
+    echo "4) استارت / استاپ / ریستارت یک لوکیشن"
+    echo "5) حذف کامل سرویس و اسکریپت از سرور"
+    echo "0) خروج"
+    echo ""
+    read -p "انتخاب شما: " choice
+    case "$choice" in
+        1) menu_add ;;
+        2) menu_remove ;;
+        3) menu_change_region ;;
+        4) menu_control ;;
+        5) menu_uninstall ;;
+        0) exit 0 ;;
+        *) ;;
+    esac
+done
+MENUEOF
+chmod +x /usr/local/bin/vpn-menu
+
+# 9. ساخت ربات تلگرام (پشتیبانی از چند لوکیشن + حذف کامل)
+echo -e "${CYAN}[8/8] Creating Bot & default location...${NC}"
+cat > /root/manager_bot.py << EOF
 import telebot
 import subprocess
 import json
@@ -88,337 +442,265 @@ import os
 import requests
 from telebot import types
 
+# --- Config for Amir Salemi ---
 BOT_TOKEN = "${BOT_TOKEN}"
 ADMIN_ID = ${ADMIN_ID}
-DATA_DIR = "/etc/vpncore-multi"
-INSTANCES_FILE = os.path.join(DATA_DIR, "instances.json")
+# ------------------------------
+
+VPN_MENU = "/usr/local/bin/vpn-menu"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 ALL_REGIONS = {
-    "🇺🇸 US - America": "US", "🇩🇪 DE - Germany": "DE", "🇬🇧 GB - United Kingdom": "GB",
-    "🇫🇷 FR - France": "FR", "🇨🇦 CA - Canada": "CA", "🇳🇱 NL - Netherlands": "NL",
-    "🇨🇭 CH - Switzerland": "CH", "🇸🇪 SE - Sweden": "SE", "🇫🇮 FI - Finland": "FI"
+    "🇺🇸 US - آمریکا": "US", "🇩🇪 DE - آلمان": "DE", "🇬🇧 GB - انگلیس": "GB",
+    "🇫🇷 FR - فرانسه": "FR", "🇨🇦 CA - کانادا": "CA", "🇳🇱 NL - هلند": "NL",
+    "🇨🇭 CH - سوئیس": "CH", "🇸🇪 SE - سوئد": "SE", "🇫🇮 FI - فنلاند": "FI",
+    "🇦🇹 AT - اتریش": "AT", "🇧🇪 BE - بلژیک": "BE", "🇩🇰 DK - دانمارک": "DK",
+    "🇪🇸 ES - اسپانیا": "ES", "🇮🇹 IT - ایتالیا": "IT", "🇮🇪 IE - ایرلند": "IE",
+    "🇳🇴 NO - نروژ": "NO", "🇵🇱 PL - لهستان": "PL", "🇹🇷 TR - ترکیه": "TR",
+    "🇧🇬 BG - بلغارستان": "BG", "🇨🇿 CZ - چک": "CZ", "🇪🇪 EE - استونی": "EE",
+    "🇭🇷 HR - کرواسی": "HR", "🇭🇺 HU - مجارستان": "HU", "🇮🇳 IN - هند": "IN",
+    "🇯🇵 JP - ژاپن": "JP", "🇱🇻 LV - لتونی": "LV", "🇵🇹 PT - پرتغال": "PT",
+    "🇷🇴 RO - رومانی": "RO", "🇷🇸 RS - صربستان": "RS", "🇸🇬 SG - سنگاپور": "SG",
+    "🇸🇰 SK - اسلواکی": "SK"
 }
 
-user_states = {}
+pending_action = {}  # user_id -> {"action": ..., "data": {...}}
 
-def load_instances():
-    if os.path.exists(INSTANCES_FILE):
-        try:
-            with open(INSTANCES_FILE, 'r') as f: return json.load(f)
-        except: pass
-    return {"2080": "US"}
+def is_admin(user_id):
+    return user_id == ADMIN_ID
 
-def save_instances(data):
-    with open(INSTANCES_FILE, 'w') as f: json.dump(data, f, indent=4)
-
-def manage_service(port, region, action="start"):
-    service_name = f"vpncore-{port}"
-    service_file = f"/etc/systemd/system/{service_name}.service"
-    
-    # Force Stop & Kill to prevent hanging
-    subprocess.run(f"systemctl stop {service_name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(f"pkill -f 'config-{port}.json'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    if action == "stop":
-        subprocess.run(f"systemctl disable {service_name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if os.path.exists(service_file): os.remove(service_file)
-        if os.path.exists(f"{DATA_DIR}/config-{port}.json"): os.remove(f"{DATA_DIR}/config-{port}.json")
-        subprocess.run("systemctl daemon-reload", shell=True)
-        return
-
-    # Create config and systemd unit
-    subprocess.run(f"{DATA_DIR}/template.sh {port} {region}", shell=True)
-    with open(service_file, 'w') as f:
-        f.write(f"""[Unit]\nDescription=VPN Core Port {port}\nAfter=network.target\n\n[Service]\nType=simple\nUser=root\nWorkingDirectory={DATA_DIR}\nExecStart=/usr/local/bin/vpncore -config {DATA_DIR}/config-{port}.json\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\n""")
-        
-    subprocess.run("systemctl daemon-reload", shell=True)
-    subprocess.run(f"systemctl enable {service_name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(f"systemctl start {service_name}", shell=True)
-
-def get_current_ip(port):
+def run(args):
     try:
-        r = requests.get('https://api.ipify.org', proxies={'http': f'socks5h://127.0.0.1:{port}', 'https': f'socks5h://127.0.0.1:{port}'}, timeout=3)
-        return r.text if r.status_code == 200 else None
-    except: return None
+        result = subprocess.run([VPN_MENU] + args, capture_output=True, text=True, timeout=30)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except Exception as e:
+        return 1, "", str(e)
+
+def get_locations():
+    code, out, err = run(["list"])
+    if code != 0 or not out:
+        return []
+    try:
+        return json.loads(out)
+    except Exception:
+        return []
 
 def main_menu():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add("📊 Status / وضعیت پورت‌ها", "🌍 Add Location / لوکیشن جدید", "🔄 Change Location/Port / تغییر پورت و لوکیشن", "🗑 Delete Service / حذف سرویس")
+    markup.add("📊 وضعیت لوکیشن‌ها", "➕ افزودن لوکیشن")
+    markup.add("🗑 حذف لوکیشن", "🌍 تغییر ریجن لوکیشن")
+    markup.add("▶️ استارت", "⏹ استاپ", "🔄 ریستارت")
+    markup.add("❌ حذف کامل سرویس از سرور")
     return markup
 
-@bot.message_handler(commands=['start', 'help'])
-def welcome(message):
-    if message.from_user.id != ADMIN_ID: return
-    bot.reply_to(message, "👋 Welcome to VPN Manager Dashboard\n\n`Created by Mahdi`", reply_markup=main_menu(), parse_mode="Markdown")
+def region_keyboard(prefix):
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    buttons = [types.InlineKeyboardButton(name, callback_data=f"{prefix}_{code}") for name, code in ALL_REGIONS.items()]
+    markup.add(*buttons)
+    return markup
 
-@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID)
-def handle_text(message):
+def locations_keyboard(prefix):
+    locs = get_locations()
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for loc in locs:
+        label = f"{loc['name']} ({loc['region']}:{loc['port']})"
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"{prefix}_{loc['id']}"))
+    return markup, locs
+
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    if is_admin(message.from_user.id):
+        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **امیر سالمی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "⛔️ دسترسی غیرمجاز است.")
+
+@bot.message_handler(func=lambda m: True)
+def handle_messages(message):
+    if not is_admin(message.from_user.id):
+        return
     msg = message.text
     cid = message.chat.id
-    
-    if msg == "📊 Status / وضعیت پورت‌ها":
-        bot.send_message(cid, "⏳ Checking core instances...")
-        instances = load_instances()
-        res = "📋 **Active Proxy Instances:**\n\n"
-        for port, reg in instances.items():
-            status = subprocess.run(f"systemctl is-active vpncore-{port}", shell=True, capture_output=True, text=True).stdout.strip()
+    uid = message.from_user.id
+
+    if msg == "📊 وضعیت لوکیشن‌ها":
+        locs = get_locations()
+        if not locs:
+            bot.send_message(cid, "هیچ لوکیشنی ثبت نشده است.")
+            return
+        bot.send_message(cid, "⏳ در حال بررسی وضعیت...")
+        lines = []
+        for loc in locs:
+            code, status, _ = run(["status", loc["id"]])
             icon = "✅" if status == "active" else "🔴"
-            ip = get_current_ip(port) or "No IP (Connecting...)"
-            res += f"{icon} **Port:** `{port}` | **Region:** `{reg}`\n🌐 **IP:** `{ip}`\n───────────────────\n"
-        res += "\n`Created by Mahdi`"
-        bot.send_message(cid, res, parse_mode="Markdown")
-        
-    elif msg == "🌍 Add Location / لوکیشن جدید":
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        buttons = [types.InlineKeyboardButton(name, callback_data=f"add_{code}") for name, code in ALL_REGIONS.items()]
-        markup.add(*buttons)
-        bot.send_message(cid, "🗺 Select Target Region:", reply_markup=markup)
-        
-    elif msg == "🔄 Change Location/Port / تغییر پورت و لوکیشن":
-        instances = load_instances()
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for port, reg in instances.items():
-            markup.add(types.InlineKeyboardButton(f"⚙️ Port {port} ({reg})", callback_data=f"modselect_{port}"))
-        bot.send_message(cid, "📍 Select which instance you want to modify:", reply_markup=markup)
-        
-    elif msg == "🗑 Delete Service / حذف سرویس":
-        instances = load_instances()
-        if len(instances) <= 1:
-            bot.send_message(cid, "⚠️ Cannot delete the last remaining instance.")
+            lines.append(f"{icon} **{loc['name']}** [{loc['id']}]\n   🌍 {loc['region']}  |  🔌 پورت {loc['port']}  |  وضعیت: {status}")
+        bot.send_message(cid, "\n\n".join(lines), parse_mode="Markdown")
+
+    elif msg == "➕ افزودن لوکیشن":
+        pending_action[uid] = {"action": "add", "data": {}}
+        bot.send_message(cid, "نام دلخواه برای این لوکیشن را وارد کنید:")
+        bot.register_next_step_handler(message, add_step_name)
+
+    elif msg == "🗑 حذف لوکیشن":
+        markup, locs = locations_keyboard("delloc")
+        if not locs:
+            bot.send_message(cid, "هیچ لوکیشنی برای حذف وجود ندارد.")
             return
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for port, reg in instances.items():
-            markup.add(types.InlineKeyboardButton(f"🗑 Remove {port} ({reg})", callback_data=f"del_{port}"))
-        bot.send_message(cid, "🗑 Select the instance to completely delete:", reply_markup=markup)
+        bot.send_message(cid, "لوکیشن مورد نظر برای حذف را انتخاب کنید:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('add_'))
-def cb_add(call):
-    reg = call.data.split("_")[1]
-    user_states[call.message.chat.id] = {"action": "adding", "region": reg}
-    bot.edit_message_text(f"Selected Region: **{reg}**\n\nEnter SOCKS5 Custom Port (1024-65535):", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    elif msg == "🌍 تغییر ریجن لوکیشن":
+        markup, locs = locations_keyboard("pickregionloc")
+        if not locs:
+            bot.send_message(cid, "هیچ لوکیشنی وجود ندارد.")
+            return
+        bot.send_message(cid, "ابتدا لوکیشن را انتخاب کنید:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('modselect_'))
-def cb_mod(call):
-    port = call.data.split("_")[1]
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("🌍 Change Only Region", callback_data=f"modreg_{port}"),
-               types.InlineKeyboardButton("🔢 Change Only Port", callback_data=f"modport_{port}"))
-    bot.edit_message_text(f"Modifying Instance on Port **{port}**:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    elif msg in ("▶️ استارت", "⏹ استاپ", "🔄 ریستارت"):
+        action_map = {"▶️ استارت": "start", "⏹ استاپ": "stop", "🔄 ریستارت": "restart"}
+        prefix = "svc_" + action_map[msg]
+        markup, locs = locations_keyboard(prefix)
+        if not locs:
+            bot.send_message(cid, "هیچ لوکیشنی وجود ندارد.")
+            return
+        bot.send_message(cid, "لوکیشن مورد نظر را انتخاب کنید:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('modreg_'))
-def cb_modreg(call):
-    port = call.data.split("_")[1]
-    markup = types.InlineKeyboardMarkup(row_width=3)
-    for name, code in ALL_REGIONS.items():
-        markup.add(types.InlineKeyboardButton(name, callback_data=f"setreg_{port}_{code}"))
-    bot.edit_message_text(f"Select New Region for Port **{port}**:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    elif msg == "❌ حذف کامل سرویس از سرور":
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⚠️ بله، همه چیز حذف شود", callback_data="confirm_full_uninstall"))
+        markup.add(types.InlineKeyboardButton("انصراف", callback_data="cancel_full_uninstall"))
+        bot.send_message(cid, "🚨 این کار تمام لوکیشن‌ها، ربات و اسکریپت‌های نصب‌شده را برای همیشه از سرور حذف می‌کند.\nآیا مطمئن هستید؟", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('setreg_'))
-def cb_setreg(call):
-    _, port, new_reg = call.data.split("_")
-    instances = load_instances()
-    instances[port] = new_reg
-    save_instances(instances)
-    bot.edit_message_text(f"⏳ Rebuilding Port {port} to Region {new_reg}...", call.message.chat.id, call.message.message_id)
-    manage_service(port, new_reg, "start")
-    bot.send_message(call.message.chat.id, f"✅ Region successfully changed to `{new_reg}`!", parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('modport_'))
-def cb_modport(call):
-    port = call.data.split("_")[1]
-    user_states[call.message.chat.id] = {"action": "modifying_port", "old_port": port}
-    bot.edit_message_text(f"Enter New Port number for old Port **{port}**:", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('del_'))
-def cb_del(call):
-    port = call.data.split("_")[1]
-    instances = load_instances()
-    if port in instances:
-        manage_service(port, None, "stop")
-        instances.pop(port)
-        save_instances(instances)
-        bot.edit_message_text(f"🗑 Instance on Port `{port}` has been totally removed.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-
-@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID and message.chat.id in user_states)
-def process_inputs(message):
-    cid = message.chat.id
-    state = user_states[cid]
-    val = message.text.strip()
-    
-    if not val.isdigit() or not (1024 <= int(val) <= 65535):
-        bot.send_message(cid, "❌ Invalid Port. Enter a digit between 1024 and 65535:")
+def add_step_name(message):
+    if not is_admin(message.from_user.id):
         return
+    uid = message.from_user.id
+    pending_action[uid]["data"]["name"] = message.text.strip()
+    bot.send_message(message.chat.id, "ریجن را انتخاب کنید:", reply_markup=region_keyboard("addregion"))
 
-    instances = load_instances()
-    
-    if state["action"] == "adding":
-        if val in instances:
-            bot.send_message(cid, "❌ Port already in use! Try another one:")
-            return
-        reg = state["region"]
-        instances[val] = reg
-        save_instances(instances)
-        bot.send_message(cid, f"⏳ Provisioning Core proxy on Port {val} ({reg})...")
-        manage_service(val, reg, "start")
-        bot.send_message(cid, f"✅ Configured and started on port `{val}`!", parse_mode="Markdown", reply_markup=main_menu())
-        user_states.pop(cid)
-        
-    elif state["action"] == "modifying_port":
-        if val in instances:
-            bot.send_message(cid, "❌ Target Port already in use! Try another one:")
-            return
-        old_port = state["old_port"]
-        reg = instances.pop(old_port)
-        manage_service(old_port, None, "stop")
-        
-        instances[val] = reg
-        save_instances(instances)
-        manage_service(val, reg, "start")
-        bot.send_message(cid, f"✅ Port altered from `{old_port}` to `{val}`!", parse_mode="Markdown", reply_markup=main_menu())
-        user_states.pop(cid)
+def add_step_port(message):
+    if not is_admin(message.from_user.id):
+        return
+    uid = message.from_user.id
+    cid = message.chat.id
+    port_text = message.text.strip()
+    if not port_text.isdigit():
+        bot.send_message(cid, "پورت باید عدد باشد. دوباره تلاش کنید یا /start را بزنید.")
+        return
+    data = pending_action.get(uid, {}).get("data", {})
+    name = data.get("name")
+    region = data.get("region")
+    bot.send_message(cid, "⏳ در حال ساخت لوکیشن...")
+    code, out, err = run(["add", name, region, port_text])
+    if code == 0:
+        bot.send_message(cid, f"✅ لوکیشن **{name}** با ریجن {region} روی پورت {port_text} اضافه و راه‌اندازی شد.", parse_mode="Markdown", reply_markup=main_menu())
+    else:
+        bot.send_message(cid, f"❌ خطا: {out}\n{err}")
+    pending_action.pop(uid, None)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("addregion_"))
+def cb_add_region(call):
+    if not is_admin(call.from_user.id):
+        return
+    uid = call.from_user.id
+    region = call.data.split("_", 1)[1]
+    pending_action.setdefault(uid, {"action": "add", "data": {}})
+    pending_action[uid]["data"]["region"] = region
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(f"ریجن انتخابی: {region}", call.message.chat.id, call.message.message_id)
+    msg = bot.send_message(call.message.chat.id, "پورت اختصاصی این لوکیشن را وارد کنید (مثلا 2081):")
+    bot.register_next_step_handler(msg, add_step_port)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delloc_"))
+def cb_delete_location(call):
+    if not is_admin(call.from_user.id):
+        return
+    loc_id = call.data.split("_", 1)[1]
+    cid = call.message.chat.id
+    bot.answer_callback_query(call.id, "در حال حذف...")
+    code, out, err = run(["remove", loc_id])
+    if code == 0:
+        bot.edit_message_text(f"✅ لوکیشن {loc_id} حذف شد.", cid, call.message.message_id)
+    else:
+        bot.edit_message_text(f"❌ خطا در حذف: {out} {err}", cid, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("pickregionloc_"))
+def cb_pick_region_loc(call):
+    if not is_admin(call.from_user.id):
+        return
+    loc_id = call.data.split("_", 1)[1]
+    cid = call.message.chat.id
+    bot.answer_callback_query(call.id)
+    pending_action[call.from_user.id] = {"action": "region", "data": {"loc_id": loc_id}}
+    bot.edit_message_text("ریجن جدید را انتخاب کنید:", cid, call.message.message_id, reply_markup=region_keyboard("applyregion"))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("applyregion_"))
+def cb_apply_region(call):
+    if not is_admin(call.from_user.id):
+        return
+    uid = call.from_user.id
+    region = call.data.split("_", 1)[1]
+    cid = call.message.chat.id
+    loc_id = pending_action.get(uid, {}).get("data", {}).get("loc_id")
+    if not loc_id:
+        return
+    bot.answer_callback_query(call.id, "در حال اعمال...")
+    bot.edit_message_text(f"⏳ تنظیم ریجن {region} برای {loc_id}...", cid, call.message.message_id)
+    code, out, err = run(["update-region", loc_id, region])
+    if code == 0:
+        bot.edit_message_text(f"✅ ریجن لوکیشن {loc_id} به {region} تغییر یافت و ریستارت شد.", cid, call.message.message_id)
+    else:
+        bot.edit_message_text(f"❌ خطا: {out} {err}", cid, call.message.message_id)
+    pending_action.pop(uid, None)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("svc_"))
+def cb_service_control(call):
+    if not is_admin(call.from_user.id):
+        return
+    _, action, loc_id = call.data.split("_", 2)
+    cid = call.message.chat.id
+    bot.answer_callback_query(call.id, "در حال اجرا...")
+    code, out, err = run([action, loc_id])
+    labels = {"start": "استارت", "stop": "استاپ", "restart": "ریستارت"}
+    if code == 0:
+        bot.edit_message_text(f"✅ عملیات {labels.get(action, action)} برای {loc_id} انجام شد.", cid, call.message.message_id)
+    else:
+        bot.edit_message_text(f"❌ خطا: {out} {err}", cid, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_full_uninstall")
+def cb_cancel_uninstall(call):
+    if not is_admin(call.from_user.id):
+        return
+    bot.answer_callback_query(call.id, "لغو شد")
+    bot.edit_message_text("عملیات حذف لغو شد.", call.message.chat.id, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "confirm_full_uninstall")
+def cb_confirm_uninstall(call):
+    if not is_admin(call.from_user.id):
+        return
+    cid = call.message.chat.id
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text("🗑 در حال حذف کامل سرویس، لوکیشن‌ها و ربات از سرور...\nاین آخرین پیام ربات خواهد بود.", cid, call.message.message_id)
+    # اجرای حذف به صورت جدا از پردازش ربات تا بعد از توقف سرویس ربات هم ادامه پیدا کند
+    subprocess.Popen(
+        ["nohup", "bash", "-c", "sleep 2; systemctl stop psiphon-bot; " + VPN_MENU + " uninstall --yes"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+    )
+    os._exit(0)
 
 bot.infinity_polling()
 EOF
 
-# 5. Create Terminal Interactive Menu Script (/usr/local/bin/vpn-menu)
-echo -e "${CYAN}[4/5] Creating CLI Engine Terminal Menu...${NC}"
-cat <<'EOF' > /usr/local/bin/vpn-menu
-#!/bin/bash
-DATA_DIR="/etc/vpncore-multi"
-INSTANCES_FILE="$DATA_DIR/instances.json"
-
-show_menu() {
-    clear
-    echo -e "\033[0;36m***************************************************\033[0m"
-    echo -e "\033[0;36m*                                                 *\033[0m"
-    echo -e "\033[0;36m*  MAHDI - TERMINAL VPN MANAGER INFRASTRUCTURE    *\033[0m"
-    echo -e "\033[0;36m*  Created by Mahdi                               *\033[0m"
-    echo -e "\033[0;36m*                                                 *\033[0m"
-    echo -e "\033[0;36m***************************************************\033[0m"
-    echo -e "1) 📊 View Service Instances Status"
-    echo -e "2) 🌍 Add New Multi-Location Proxy Instance"
-    echo -e "3) 🔄 Modify Existing Instance (Port/Region)"
-    echo -e "4) 🗑 Delete/Purge Instance"
-    echo -e "5) ❌ Exit Terminal Menu"
-    echo -ne "\nSelect Option: "
-}
-
-manage_core() {
-    port=$1; region=$2; action=$3
-    service_name="vpncore-$port"
-    systemctl stop $service_name &>/dev/null
-    pkill -f "config-$port.json" &>/dev/null
-    if [ "$action" == "stop" ]; then
-        systemctl disable $service_name &>/dev/null
-        rm -f "/etc/systemd/system/$service_name.service"
-        rm -f "$DATA_DIR/config-$port.json"
-        systemctl daemon-reload
-        return
-    fi
-    $DATA_DIR/template.sh $port $region
-    cat <<EON > /etc/systemd/system/$service_name.service
+# ساخت سرویس ربات
+cat > /etc/systemd/system/psiphon-bot.service << 'EOF'
 [Unit]
-Description=VPN Core Port $port
+Description=Telegram Bot for Amir Salemi Manager
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$DATA_DIR
-ExecStart=/usr/local/bin/vpncore -config $DATA_DIR/config-$port.json
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EON
-    systemctl daemon-reload
-    systemctl enable $service_name &>/dev/null
-    systemctl start $service_name
-}
-
-while true; do
-    show_menu
-    read opt
-    case $opt in
-        1)
-            echo -e "\n--- Running Services ---"
-            jq -r 'to_entries[] | "\(.key) \(.value)"' $INSTANCES_FILE | while read p r; do
-                stat=$(systemctl is-active vpncore-$p)
-                echo -e "Port: \033[0;32m$p\033[0m | Region: \033[0;33m$r\033[0m | Active: $stat"
-            done
-            echo -e "\nPress enter to go back..."; read
-            ;;
-        2)
-            echo -ne "Enter New Port: " && read nport
-            echo -ne "Enter Region (e.g. US, DE, GB, FR): " && read nreg
-            if jq -e ".\"$nport\"" $INSTANCES_FILE &>/dev/null; then
-                echo "Error: Port already exists."
-            else
-                jq ".\"$nport\"=\"${nreg^^}\"" $INSTANCES_FILE > tmp.json && mv tmp.json $INSTANCES_FILE
-                manage_core $nport ${nreg^^} "start"
-                echo "Successfully Added!"
-            fi
-            sleep 2
-            ;;
-        3)
-            echo -ne "Enter Existing Port to Modify: " && read mport
-            if ! jq -e ".\"$mport\"" $INSTANCES_FILE &>/dev/null; then
-                echo "Port not found."
-            else
-                echo "1) Change Region Only"
-                echo "2) Change Port Only"
-                read mopt
-                if [ "$mopt" == "1" ]; then
-                    echo -ne "Enter New Region: " && read mreg
-                    jq ".\"$mport\"=\"${mreg^^}\"" $INSTANCES_FILE > tmp.json && mv tmp.json $INSTANCES_FILE
-                    manage_core $mport ${mreg^^} "start"
-                elif [ "$mopt" == "2" ]; then
-                    echo -ne "Enter New Port number: " && read mnewport
-                    reg=$(jq -r ".\"$mport\"" $INSTANCES_FILE)
-                    manage_core $mport "" "stop"
-                    jq "del(.\"$mport\") | .\"$mnewport\"=\"$reg\"" $INSTANCES_FILE > tmp.json && mv tmp.json $INSTANCES_FILE
-                    manage_core $mnewport $reg "start"
-                fi
-                echo "Modified Successfully!"
-            fi
-            sleep 2
-            ;;
-        4)
-            echo -ne "Enter Port to Delete: " && read dport
-            if [ $(jq 'length' $INSTANCES_FILE) -le 1 ]; then
-                echo "Cannot remove the last active instance."
-            else
-                manage_core $dport "" "stop"
-                jq "del(.\"$dport\")" $INSTANCES_FILE > tmp.json && mv tmp.json $INSTANCES_FILE
-                echo "Instance Purged."
-            fi
-            sleep 2
-            ;;
-        5)
-            exit 0
-            ;;
-    esac
-done
-EOF
-chmod +x /usr/local/bin/vpn-menu
-
-# Initialize base instance
-/etc/vpncore-multi/template.sh 2080 US
-
-# Systemd Bot Daemon Setup
-cat <<EOF > /etc/systemd/system/vpncore-bot.service
-[Unit]
-Description=Telegram Multi-Port Management Bot Engine Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/etc/vpncore-multi
-ExecStart=/usr/bin/python3 /etc/vpncore-multi/manager_bot.py
+WorkingDirectory=/root
+ExecStart=/usr/bin/python3 /root/manager_bot.py
 Restart=always
 RestartSec=10
 
@@ -426,37 +708,22 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-echo -e "${CYAN}[5/5] Activating system services...${NC}"
+# راه‌اندازی نهایی
 systemctl daemon-reload
 
-# Setup unit for default port 2080
-cat <<EOF > /etc/systemd/system/vpncore-2080.service
-[Unit]
-Description=VPN Core Port 2080
-After=network.target
+# ساخت لوکیشن پیش‌فرض (سازگار با نصب‌های قبلی: US روی پورت 2080)
+/usr/local/bin/vpn-menu add "Default-US" "US" "2080" >/dev/null 2>&1
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/etc/vpncore-multi
-ExecStart=/usr/local/bin/vpncore -config /etc/vpncore-multi/config-2080.json
-Restart=always
-RestartSec=3
+systemctl enable psiphon-bot >/dev/null 2>&1
+systemctl restart psiphon-bot
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable vpncore-2080 &>/dev/null
-systemctl enable vpncore-bot &>/dev/null
-systemctl restart vpncore-2080
-systemctl restart vpncore-bot
-
+echo ""
 echo -e "${GREEN}**************************************************${NC}"
-echo -e "${GREEN}* INSTALLATION COMPLETE 🎉                       *${NC}"
-echo -e "${GREEN}* Created by Mahdi                               *${NC}"
+echo -e "${GREEN}* INSTALLATION COMPLETE! 🎉              *${NC}"
+echo -e "${GREEN}* Designed for: MAHDI                 *${NC}"
 echo -e "${GREEN}**************************************************${NC}"
-echo -e "⚡ Type \033[1;33mvpn-menu\033[0m anywhere inside your terminal to launch the menu."
-echo -e "⚡ Or use your Telegram bot to control instances dynamically."
+echo -e "1. Default Location: US on port 2080"
+echo -e "2. Bot Status: STARTED"
+echo -e "3. Terminal Command: type 'vpn-menu' to manage locations or uninstall"
+echo -e "4. Add more locations from the terminal menu or directly from the Telegram bot"
 echo ""
