@@ -182,6 +182,11 @@ cat > /usr/local/bin/vpn-menu << 'MENUEOF'
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}This command must be run as root. Try: sudo vpn-menu${NC}"
+    exit 1
+fi
+
 BASE_DIR="/etc/vpn-manager"
 CONF_DIR="$BASE_DIR/configs"
 DATA_DIR="$BASE_DIR/data"
@@ -280,14 +285,20 @@ do_uninstall_all() {
     local ids
     ids=$(python3 "$HELPER" list 2>/dev/null | python3 -c "import json,sys; [print(l['id']) for l in json.load(sys.stdin)]" 2>/dev/null)
     for id in $ids; do
+        echo "  - stopping psiphon@$id"
         systemctl disable --now "psiphon@$id" >/dev/null 2>&1
     done
+    echo "Stopping Telegram bot service..."
     systemctl disable --now psiphon-bot >/dev/null 2>&1
+    echo "Removing systemd unit files..."
     rm -f /etc/systemd/system/psiphon@.service
     rm -f /etc/systemd/system/psiphon-bot.service
     systemctl daemon-reload
+    echo "Removing config and data directory ($BASE_DIR)..."
     rm -rf "$BASE_DIR"
+    echo "Removing psiphon binary..."
     rm -f /usr/local/bin/psiphon
+    echo "Removing Telegram bot script..."
     rm -f /root/manager_bot.py
     echo "Uninstall complete."
     rm -f -- "$0" 2>/dev/null
@@ -321,6 +332,11 @@ fi
 
 pause() { read -p "Press Enter to continue..." _; }
 
+# حذف کاراکترهای نامرئی (مثل \r از بعضی کلاینت‌های ترمینال) و فاصله اضافه از ورودی کاربر
+sanitize() {
+    printf '%s' "$1" | tr -d '\r' | xargs 2>/dev/null
+}
+
 print_locations() {
     local data
     data=$(do_list_json)
@@ -339,8 +355,9 @@ menu_add() {
     echo -e "${CYAN}=== Add New Location ===${NC}"
     read -p "Location name: " name
     read -p "Region code (e.g. US, DE, GB): " region
-    region=${region:-US}; region=${region^^}
+    region=$(sanitize "${region:-US}"); region=${region^^}
     read -p "Dedicated SOCKS port (e.g. 2081): " port
+    name=$(sanitize "$name"); port=$(sanitize "$port")
     do_add "$name" "$region" "$port"
     pause
 }
@@ -351,6 +368,7 @@ menu_remove() {
     print_locations
     echo ""
     read -p "Location ID to remove (e.g. loc1): " id
+    id=$(sanitize "$id")
     [ -z "$id" ] && return
     do_remove "$id"
     pause
@@ -362,9 +380,10 @@ menu_change_region() {
     print_locations
     echo ""
     read -p "Location ID: " id
+    id=$(sanitize "$id")
     [ -z "$id" ] && return
     read -p "New region code: " region
-    region=${region^^}
+    region=$(sanitize "$region"); region=${region^^}
     do_update_region "$id" "$region"
     pause
 }
@@ -375,13 +394,41 @@ menu_control() {
     print_locations
     echo ""
     read -p "Location ID: " id
-    [ -z "$id" ] && return
+    id=$(sanitize "$id")
+    if [ -z "$id" ]; then return; fi
+    if ! python3 "$HELPER" get "$id" >/dev/null 2>&1; then
+        echo -e "${RED}ERROR: Location '$id' not found.${NC}"
+        pause
+        return
+    fi
     echo "1) Start  2) Stop  3) Restart"
     read -p "Choice: " op
+    op=$(sanitize "$op")
     case "$op" in
-        1) systemctl start "psiphon@$id" ;;
-        2) systemctl stop "psiphon@$id" ;;
-        3) systemctl restart "psiphon@$id" ;;
+        1)
+            if systemctl start "psiphon@$id"; then
+                echo -e "${GREEN}OK: psiphon@$id started.${NC}"
+            else
+                echo -e "${RED}ERROR: failed to start psiphon@$id (see message above).${NC}"
+            fi
+            ;;
+        2)
+            if systemctl stop "psiphon@$id"; then
+                echo -e "${GREEN}OK: psiphon@$id stopped.${NC}"
+            else
+                echo -e "${RED}ERROR: failed to stop psiphon@$id (see message above).${NC}"
+            fi
+            ;;
+        3)
+            if systemctl restart "psiphon@$id"; then
+                echo -e "${GREEN}OK: psiphon@$id restarted.${NC}"
+            else
+                echo -e "${RED}ERROR: failed to restart psiphon@$id (see message above).${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Invalid choice: '$op'${NC}"
+            ;;
     esac
     pause
 }
@@ -391,8 +438,8 @@ menu_uninstall() {
     echo -e "${RED}=== Completely Remove Service & Script ===${NC}"
     echo -e "${YELLOW}This will permanently delete all locations, the Telegram bot, and the installed scripts.${NC}"
     read -p "Type YES to confirm: " confirm
+    confirm=$(sanitize "$confirm")
     if [ "$confirm" == "YES" ]; then
-        systemctl stop psiphon-bot >/dev/null 2>&1
         do_uninstall_all
         exit 0
     else
@@ -400,6 +447,7 @@ menu_uninstall() {
         pause
     fi
 }
+
 
 while true; do
     clear
@@ -682,7 +730,7 @@ def cb_confirm_uninstall(call):
     bot.edit_message_text("🗑 در حال حذف کامل سرویس، لوکیشن‌ها و ربات از سرور...\nاین آخرین پیام ربات خواهد بود.", cid, call.message.message_id)
     # اجرای حذف به صورت جدا از پردازش ربات تا بعد از توقف سرویس ربات هم ادامه پیدا کند
     subprocess.Popen(
-        ["nohup", "bash", "-c", "sleep 2; systemctl stop psiphon-bot; " + VPN_MENU + " uninstall --yes"],
+        ["nohup", "bash", "-c", "sleep 2; " + VPN_MENU + " uninstall --yes"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
     )
     os._exit(0)
@@ -703,6 +751,7 @@ WorkingDirectory=/root
 ExecStart=/usr/bin/python3 /root/manager_bot.py
 Restart=always
 RestartSec=10
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
