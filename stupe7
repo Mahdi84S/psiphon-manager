@@ -11,7 +11,7 @@ clear
 
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${CYAN}* *${NC}"
-echo -e "${CYAN}* AMIR SALEMI - VPN MANAGER SETUP         *${NC}"
+echo -e "${CYAN}* Mahdi_S84 - VPN MANAGER SETUP         *${NC}"
 echo -e "${CYAN}* *${NC}"
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${YELLOW}   >>> Starting Installation <<<   ${NC}"
