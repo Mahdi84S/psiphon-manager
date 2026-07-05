@@ -11,7 +11,7 @@ clear
 
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${CYAN}* *${NC}"
-echo -e "${CYAN}* MAHDI - VPN MANAGER SETUP         *${NC}"
+echo -e "${CYAN}* AMIR SALEMI - VPN MANAGER SETUP         *${NC}"
 echo -e "${CYAN}* *${NC}"
 echo -e "${CYAN}***************************************************${NC}"
 echo -e "${YELLOW}   >>> Starting Installation <<<   ${NC}"
@@ -240,9 +240,30 @@ do_add() {
     id=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
     make_config "$id" "$region" "$port"
     systemctl enable --now "psiphon@$id" >/dev/null 2>&1
-    echo "OK: Location '$name' added as $id (region=$region, port=$port)"
-    echo "$id"
-    return 0
+
+    echo "TESTING: checking whether location '$name' (region=$region, port=$port) actually connects..."
+    local found_ip=""
+    local max_retries=15
+    local count=0
+    while [ "$count" -lt "$max_retries" ]; do
+        found_ip=$(curl -s --socks5 "127.0.0.1:$port" https://api.ipify.org --max-time 3 2>/dev/null)
+        if [ -n "$found_ip" ]; then break; fi
+        sleep 2
+        count=$((count+1))
+    done
+
+    if [ -n "$found_ip" ]; then
+        echo "OK: Location '$name' added as $id (region=$region, port=$port) — connection verified, IP=$found_ip"
+        echo "$id"
+        return 0
+    else
+        echo "FAIL: Location '$name' (region=$region, port=$port) is NOT working — no connection after 30s. Rolling back, this location was NOT added."
+        systemctl disable --now "psiphon@$id" >/dev/null 2>&1
+        rm -f "$CONF_DIR/$id.json"
+        rm -rf "$DATA_DIR/$id"
+        python3 "$HELPER" remove "$id" >/dev/null 2>&1
+        return 1
+    fi
 }
 
 do_remove() {
@@ -452,7 +473,7 @@ menu_uninstall() {
 while true; do
     clear
     echo -e "${CYAN}***************************************************${NC}"
-    echo -e "${CYAN}*        MAHDI - VPN MANAGER (vpn-menu)      *${NC}"
+    echo -e "${CYAN}*        AMIR SALEMI - VPN MANAGER (vpn-menu)      *${NC}"
     echo -e "${CYAN}***************************************************${NC}"
     echo ""
     echo -e "${GREEN}Current locations:${NC}"
@@ -490,7 +511,7 @@ import os
 import requests
 from telebot import types
 
-# --- Config for Mahdi ---
+# --- Config for Amir Salemi ---
 BOT_TOKEN = "${BOT_TOKEN}"
 ADMIN_ID = ${ADMIN_ID}
 # ------------------------------
@@ -520,7 +541,7 @@ def is_admin(user_id):
 
 def run(args):
     try:
-        result = subprocess.run([VPN_MENU] + args, capture_output=True, text=True, timeout=30)
+        result = subprocess.run([VPN_MENU] + args, capture_output=True, text=True, timeout=45)
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
@@ -559,7 +580,7 @@ def locations_keyboard(prefix):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if is_admin(message.from_user.id):
-        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **مهدی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
+        bot.reply_to(message, "👋 سلام قربان!\n🌹 به پنل مدیریت اختصاصی **امیر سالمی** خوش آمدید.", reply_markup=main_menu(), parse_mode="Markdown")
     else:
         bot.reply_to(message, "⛔️ دسترسی غیرمجاز است.")
 
@@ -637,12 +658,18 @@ def add_step_port(message):
     data = pending_action.get(uid, {}).get("data", {})
     name = data.get("name")
     region = data.get("region")
-    bot.send_message(cid, "⏳ در حال ساخت لوکیشن...")
+    bot.send_message(cid, "⏳ در حال ساخت لوکیشن و تست اتصال (ممکن است تا ۳۰ ثانیه طول بکشد)...")
     code, out, err = run(["add", name, region, port_text])
     if code == 0:
-        bot.send_message(cid, f"✅ لوکیشن **{name}** با ریجن {region} روی پورت {port_text} اضافه و راه‌اندازی شد.", parse_mode="Markdown", reply_markup=main_menu())
+        # استخراج آی‌پی از خروجی برای نمایش به کاربر
+        ip_part = ""
+        if "IP=" in out:
+            ip_part = f"\n🌐 آی‌پی: {out.split('IP=')[-1].splitlines()[0].strip()}"
+        bot.send_message(cid, f"✅ لوکیشن **{name}** با ریجن {region} روی پورت {port_text} اضافه شد و اتصالش تایید شد.{ip_part}", parse_mode="Markdown", reply_markup=main_menu())
+    elif "FAIL:" in out:
+        bot.send_message(cid, f"⚠️ این لوکیشن کار نمی‌کند!\nریجن **{region}** روی پورت {port_text} بعد از ۳۰ ثانیه اتصال برقرار نکرد و اضافه نشد.\nمی‌توانید ریجن یا پورت دیگری امتحان کنید.", parse_mode="Markdown", reply_markup=main_menu())
     else:
-        bot.send_message(cid, f"❌ خطا: {out}\n{err}")
+        bot.send_message(cid, f"❌ خطا: {out}\n{err}", reply_markup=main_menu())
     pending_action.pop(uid, None)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("addregion_"))
@@ -741,7 +768,7 @@ EOF
 # ساخت سرویس ربات
 cat > /etc/systemd/system/psiphon-bot.service << 'EOF'
 [Unit]
-Description=Telegram Bot for Mahdi Manager
+Description=Telegram Bot for Amir Salemi Manager
 After=network.target
 
 [Service]
@@ -761,7 +788,8 @@ EOF
 systemctl daemon-reload
 
 # ساخت لوکیشن پیش‌فرض (سازگار با نصب‌های قبلی: US روی پورت 2080)
-/usr/local/bin/vpn-menu add "Default-US" "US" "2080" >/dev/null 2>&1
+echo -e "${YELLOW}Testing default location connectivity (up to 30s)...${NC}"
+/usr/local/bin/vpn-menu add "Default-US" "US" "2080"
 
 systemctl enable psiphon-bot >/dev/null 2>&1
 systemctl restart psiphon-bot
@@ -769,7 +797,7 @@ systemctl restart psiphon-bot
 echo ""
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "${GREEN}* INSTALLATION COMPLETE! 🎉              *${NC}"
-echo -e "${GREEN}* Designed for: MAHDI                 *${NC}"
+echo -e "${GREEN}* Designed for: AMIR SALEMI                 *${NC}"
 echo -e "${GREEN}**************************************************${NC}"
 echo -e "1. Default Location: US on port 2080"
 echo -e "2. Bot Status: STARTED"
